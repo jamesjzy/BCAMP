@@ -1,9 +1,7 @@
 # @version 0.2.12
 """
-@title Child-Chain Streamer
-@author Curve.Fi
-@license MIT
-@notice Evenly streams one or more reward tokens to a single recipient
+@title Side-Chain Streamer
+@author UChicago BCAMP
 """
 
 from vyper.interfaces import ERC20
@@ -36,7 +34,6 @@ def __init__(_owner: address, _receiver: address, _reward: address):
     self.reward_count = 1
     self.reward_data[_reward].distributor = _owner
     self.reward_data[_reward].duration = 86400 * 7
-
 
 @external
 def add_reward(_token: address, _distributor: address, _duration: uint256):
