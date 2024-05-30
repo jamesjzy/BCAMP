@@ -1,8 +1,6 @@
 # @version 0.2.12
 """
 @title RewardStream
-@author Curve.Fi
-@license MIT
 @notice Evenly streams a reward token to one or more
         recipients over a predefined period
 """
