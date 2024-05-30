@@ -1,8 +1,6 @@
 # @version 0.2.16
 """
 @title RewardClaimer
-@author Curve.Fi
-@license MIT
 @notice Passthrough to allow claiming from multiple reward streamers
 """
 
