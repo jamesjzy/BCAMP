@@ -131,12 +131,6 @@ def assert_not_contract(addr: address):
 
 @external
 @view
-def get_last_user_slope(addr: address) -> int128:
-    uepoch: uint256 = self.user_point_epoch[addr]
-    return self.user_point_history[addr][uepoch].slope
-
-@external
-@view
 def user_point_history__ts(_addr: address, _idx: uint256) -> uint256:
     return self.user_point_history[_addr][_idx].ts
 
@@ -145,90 +139,47 @@ def user_point_history__ts(_addr: address, _idx: uint256) -> uint256:
 def locked__end(_addr: address) -> uint256:
     return self.locked[_addr].end
 
-@internal
-def _checkpoint(addr: address, old_locked: LockedBalance, new_locked: LockedBalance):
-    u_old: Point = empty(Point)
-    u_new: Point = empty(Point)
-    old_dslope: int128 = 0
-    new_dslope: int128 = 0
-    _epoch: uint256 = self.epoch
+@external
+    def convert_to_vebcamp(amount: uint256, lock_time: uint256):
+        token_balance = TokenInterface(self.token).balances(msg.sender)
+        assert token_balance >= amount, "Insufficient token balance"
+        assert lock_time > 0 and lock_time <= MAXTIME, "Invalid lock time"
+        
+        old_locked = self.user_locked_balances[msg.sender]
+        new_locked = LockedBalance({
+            amount: old_locked.amount + amount,
+            end: block.timestamp + lock_time
+        })
+        
+        self._checkpoint(msg.sender, old_locked, new_locked)
+        
+        # Calculate initial veBCAMP amount
+        T = lock_time
+        initial_veBCAMP = amount * MULTIPLIER / (T ** self.alpha)
+        
+        self.user_locked_balances[msg.sender] = new_locked
+        
+        TokenInterface(self.token).burn(amount)
+        
+        log ConvertToVeBCamp(msg.sender, amount, initial_veBCAMP)
 
-    if addr != ZERO_ADDRESS:
-        # Calculate slopes and biases
-        if old_locked.end > block.timestamp and old_locked.amount > 0:
-            u_old.slope = old_locked.amount / MAXTIME
-            u_old.bias = u_old.slope * convert(old_locked.end - block.timestamp, int128)
-        if new_locked.end > block.timestamp and new_locked.amount > 0:
-            T = convert(new_locked.end - block.timestamp, decimal) / convert(MAXTIME, decimal)
-            u_new.slope = new_locked.amount / MAXTIME
-            u_new.bias = u_new.slope * convert(1 / T ** self.alpha, int128)
+    @external
+    def checkpoint(participant: address):
+        old_locked = self.user_locked_balances[participant]
+        if old_locked.amount == 0 or old_locked.end <= block.timestamp:
+            return  # No locked tokens or lock period has ended
 
-        old_dslope = self.slope_changes[old_locked.end]
-        if new_locked.end != 0:
-            if new_locked.end == old_locked.end:
-                new_dslope = old_dslope
-            else:
-                new_dslope = self.slope_changes[new_locked.end]
+        elapsed_time = block.timestamp - (old_locked.end - MAXTIME)
+        remaining_time = old_locked.end - block.timestamp
 
-    last_point: Point = Point({bias: 0, slope: 0, ts: block.timestamp, blk: block.number})
-    if _epoch > 0:
-        last_point = self.point_history[_epoch]
-    last_checkpoint: uint256 = last_point.ts
-    initial_last_point: Point = last_point
-    block_slope: uint256 = 0
-    if block.timestamp > last_point.ts:
-        block_slope = MULTIPLIER * (block.number - last_point.blk) / (block.timestamp - last_point.ts)
-    
-    t_i: uint256 = (last_checkpoint / WEEK) * WEEK
-    for i in range(255):
-        t_i += WEEK
-        d_slope: int128 = 0
-        if t_i > block.timestamp:
-            t_i = block.timestamp
-        else:
-            d_slope = self.slope_changes[t_i]
-        last_point.bias -= last_point.slope * convert(t_i - last_checkpoint, int128)
-        last_point.slope += d_slope
-        if last_point.bias < 0:
-            last_point.bias = 0
-        if last_point.slope < 0:
-            last_point.slope = 0
-        last_checkpoint = t_i
-        last_point.ts = t_i
-        last_point.blk = initial_last_point.blk + block_slope * (t_i - initial_last_point.ts) / MULTIPLIER
-        _epoch += 1
-        if t_i == block.timestamp:
-            last_point.blk = block.number
-            break
-        else:
-            self.point_history[_epoch] = last_point
-
-    self.epoch = _epoch
-
-    if addr != ZERO_ADDRESS:
-        last_point.slope += (u_new.slope - u_old.slope)
-        last_point.bias += (u_new.bias - u_old.bias)
-        if last_point.slope < 0:
-            last_point.slope = 0
-        if last_point.bias < 0:
-            last_point.bias = 0
-
-    self.point_history[_epoch] = last_point
-
-    if addr != ZERO_ADDRESS:
-        if old_locked.end > block.timestamp:
-            old_dslope += u_old.slope
-            if new_locked.end == old_locked.end:
-                old_dslope -= u_new.slope
-            self.slope_changes[old_locked.end] = old_dslope
-
-        if new_locked.end > block.timestamp:
-            if new_locked.end > old_locked.end:
-                new_dslope -= u_new.slope
-                self.slope_changes[new_locked.end] = new_dslope
-
-        user_epoch: uint256 = self.user_point_epoch[addr] + 1
-
-        self.user_point_epoch[addr] = user_epoch
-        u_new.ts = block.timestamp
-        u_new.blk = block.number
+        # Calculate current veBCAMP balance
+        current_veBCAMP = old_locked.amount * MULTIPLIER / (MAXTIME ** self.alpha) * (1 - elapsed_time / MAXTIME)
+        
+        # Update locked balance to reflect the decay
+        new_locked = LockedBalance({
+            amount: current_veBCAMP,
+            end: old_locked.end
+        })
+        
+        self._checkpoint(participant, old_locked, new_locked)
+        self.user_locked_balances[participant] = new_locked
